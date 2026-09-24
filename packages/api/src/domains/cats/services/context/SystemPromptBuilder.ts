@@ -42,6 +42,7 @@ import type {
 import { loadCompiledGovernanceL0, loadCompiledGovernanceL0Sync } from './governance-l0.js';
 import { loadMcpToolsSection, loadWorkflowTriggers } from './prompt-template-loader.js';
 import { RICH_BLOCK_SHORT } from './rich-block-rules.js';
+import { buildReviewDiffSection, getPreparedReviewContext, type ReviewSubject } from '../../../community/github/GitHubPrDiff.js';
 
 // L0-budget-defense PR-B-impl (ADR-038 件套 ④): staging is wired in
 // invoke-single-cat (mirrors F225 contextHintPrefix), NOT here. See note
@@ -210,6 +211,29 @@ export interface InvocationContext {
    * Required when threadKind === 'concierge'. Provides displayName / personaTone / dutyCatProfileId.
    */
   conciergeConfig?: ConciergeConfig;
+  /**
+   * F-REVIEW Phase 2: 由编排层在派发 review 任务时填充的「预取 + 格式化」PR diff 上下文。
+   * 仅当 invoked cat 为 peer-reviewer 且成功拉取 diff 时注入；缺失则退回"仅依据 PR 描述盲审"的现有行为。
+   * `diff` 已是 token 预算裁剪后的文本；`prAnchor` / `headSha` 供 reviewer 在结构化裁决中回显，
+   * 以满足 `LocalReviewEvidenceProvider.verifyPersistedReviewMessage` 的结算校验。
+   */
+  reviewContext?: {
+    /** 已裁剪的 diff 文本（由 `formatReviewDiff` 产出）。 */
+    diff: string;
+    /** PR 锚点，形如 `owner/repo#123`。 */
+    prAnchor: string;
+    /** 被审代码的精确 head SHA（40/64 hex）。 */
+    headSha: string;
+    /** supply-chain 初判段落（F-REVIEW Phase 2 依赖审查；可选）。 */
+    depSection?: string;
+  };
+  /**
+   * F-REVIEW Phase 2（编排层入口）：review 派发处携带的 PR 主题坐标。
+   * 由编排层 `resolveReviewContext` 异步预取并写入缓存后，本 builder 在 cat 为
+   * peer-reviewer 时同步从缓存取出 diff 注入；缺失或预取失败则退回"盲审"。
+   * 与 `reviewContext` 二选一：优先用已显式填充的 `reviewContext`，否则回退到 `reviewSubject` 缓存。
+   */
+  reviewSubject?: ReviewSubject;
 }
 
 /** Get all cat configs from catRegistry (.cat-cafe/cat-catalog.json) */
@@ -632,7 +656,62 @@ export function buildReviewerSection(catId: CatId): string | null {
 }
 
 /**
- * Build identity system prompt for a cat invocation.
+ * F-REVIEW Phase 1: Review Cat 专用能力与结构化输出契约的**纯内容**。
+ *
+ * 抽成无角色依赖的纯函数，便于单测；`buildReviewChecklistSection` 负责按角色门控。
+ * 内容告诉 reviewer 猫：
+ *   1) 作为 reviewer 必须审哪些维度（checklist）；
+ *   2) 必须用结构化格式输出 findings + verdict + summary；
+ *   3) **必须保留结算所需的三个 token**：verdict 词（APPROVE/REQUEST_CHANGES/COMMENT）、
+ *      精确 headSha、PR 锚点（owner/repo#number）——否则 `LocalReviewEvidenceProvider`
+ *      的 `verifyPersistedReviewMessage` 会把裁决判为 mismatch 而拒绝结算。
+ */
+export function reviewChecklistPrompt(): string {
+  const lines = [
+    '## 你是本项目的代码 Reviewer（peer-reviewer）',
+    '',
+    '当用户/另一只猫把代码变更交给你 review 时，按以下清单逐项检查，并**必须用结构化格式输出**：',
+    '',
+    '### Review Checklist（按优先级）',
+    '- **security**：注入、越权、密钥/凭证泄露、不安全的反序列化、依赖漏洞',
+    '- **correctness**：逻辑错误、边界条件、空值/并发、错误处理缺失',
+    '- **performance**：不必要的全量扫描、N+1、阻塞调用、内存膨胀',
+    '- **maintainability**：重复代码、过度耦合、误导性命名、缺失的类型/契约',
+    '- **tests**：关键路径无测试、测试未覆盖回归、测试本身有误',
+    '- **supply-chain**：新增的第三方依赖导入是否为伪造/拼写劫持包（对照 PyPI/npm 官方元数据：下载量、首次上传时间、与热门包名相似度；低下载量 + 近期新建 + 名字近似热门包 = 高危，应 BLOCKER）',
+    '- （style / documentation 仅在确有必要时提，不要为风格阻塞合并）',
+    '',
+    '### 输出格式（必须严格遵守，便于结构化解析）',
+    '先给每条发现一行，格式：',
+    '  `[SEVERITY][CATEGORY] file:line — 问题描述 | suggestion: 修复建议`',
+    '  SEVERITY ∈ {BLOCKER, MAJOR, MINOR, NIT}；CATEGORY ∈ {security, correctness, performance, maintainability, tests, style, documentation, supply-chain}',
+    '然后给一行总裁决与一行总评：',
+    '  `Verdict: APPROVE | REQUEST_CHANGES | COMMENT`',
+    '  `Summary: 一句话总评（给作者看）`',
+    '',
+    '### 结算强制项（缺失会导致本次 review 不被系统接受）',
+    '- 总裁决行必须包含 `APPROVE` / `REQUEST_CHANGES` / `COMMENT` 之一；',
+    '- 必须原样包含本次被审代码的精确 `headSha`；',
+    '- 必须包含 PR 锚点（如 `owner/repo#123` 或完整 GitHub PR 链接）。',
+    '',
+    '判断标准：存在任意 BLOCKER 或 MAJOR → 必须 `REQUEST_CHANGES`；',
+    '仅 MINOR/NIT → 可 `COMMENT`；无任何问题 → `APPROVE`。',
+  ];
+  return lines.join('\n');
+}
+
+/**
+ * F-REVIEW Phase 1: 仅当猫在 roster 中拥有 `peer-reviewer` 角色时返回 checklist 内容
+ * ——即它就是被 `reviewer-matcher` 选中的审核猫。返回 null 表示不需要注入。
+ *
+ * 纯函数（与 buildReviewerSection 同构），便于单测。
+ */
+export function buildReviewChecklistSection(catId: CatId): string | null {
+  if (!catHasRole(catId as string, 'peer-reviewer')) return null;
+  return reviewChecklistPrompt();
+}
+
+/**
  * Backward-compatible: returns staticIdentity + invocationContext combined.
  * Pure function — same inputs always produce same output.
  */
@@ -648,6 +727,31 @@ export function buildSystemPrompt(context: InvocationContext): string {
   // F032 Phase D2: Inject reviewer section if available
   const reviewerSection = buildReviewerSection(context.catId);
   if (reviewerSection) parts.push(reviewerSection);
+
+  // F-REVIEW Phase 1: Inject Review Cat checklist + structured output contract
+  const reviewChecklist = buildReviewChecklistSection(context.catId);
+  if (reviewChecklist) parts.push(reviewChecklist);
+
+  // F-REVIEW Phase 2: Inject pre-fetched PR diff into reviewer cat context
+  // (only peer-reviewer). 优先用显式填充的 reviewContext，否则回退到
+  // 编排层经 reviewSubject 异步预取并写入缓存的 diff。
+  if (catHasRole(context.catId, 'peer-reviewer')) {
+    const rc =
+      context.reviewContext?.diff
+        ? context.reviewContext
+        : context.reviewSubject
+          ? getPreparedReviewContext(context.reviewSubject)
+          : null;
+    if (rc?.diff) {
+      const diffSection = buildReviewDiffSection(rc.diff, {
+        prAnchor: rc.prAnchor,
+        headSha: rc.headSha,
+      });
+      if (diffSection) parts.push(diffSection);
+      const depSection = rc.depSection ?? context.reviewContext?.depSection;
+      if (depSection) parts.push(depSection);
+    }
+  }
 
   // Invocation-specific context
   const dynamicPart = buildInvocationContext(context);

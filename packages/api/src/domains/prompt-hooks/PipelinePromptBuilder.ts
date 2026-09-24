@@ -19,6 +19,9 @@ import { findMonorepoRoot } from '../../utils/monorepo-root.js';
 import { renderSegment } from '../cats/services/context/prompt-template-loader.js';
 import type { InvocationContext, StaticIdentityOptions } from '../cats/services/context/SystemPromptBuilder.js';
 import { buildConciergePromptLines } from '../concierge/ConciergePromptSection.js';
+import { buildReviewChecklistSection } from '../cats/services/context/SystemPromptBuilder.js';
+import { buildReviewDiffSection, getPreparedReviewContext } from '../community/github/GitHubPrDiff.js';
+import { catHasRole } from '../../config/cat-config-loader.js';
 import { assembleForSession, assembleForTurn } from './assemble-bridge.js';
 import { HookPipeline, type PipelineResult } from './HookPipeline.js';
 import { HookRegistry } from './HookRegistry.js';
@@ -191,6 +194,53 @@ export function buildInvocationContextViaHookPipeline(context: InvocationContext
         content: conciergeLines.join('\n'),
         order: 1750,
       });
+      return HookPipeline.assemblePatches(scopedPatches);
+    }
+  }
+
+  // F-REVIEW Phase 1 + 2: Review Cat checklist + structured output contract + diff awareness.
+  // Mirror the concierge splice: only when the invoked cat is a peer-reviewer.
+  if (catHasRole(context.catId as string, 'peer-reviewer')) {
+    const additions: { hookId: string; content: string; order: number }[] = [];
+    const reviewLines = buildReviewChecklistSection(context.catId);
+    if (reviewLines && reviewLines.length > 0) {
+      additions.push({ hookId: 'review-checklist-f-review', content: reviewLines, order: 1750 });
+    }
+    if (context.reviewContext?.diff) {
+      const diffLines = buildReviewDiffSection(context.reviewContext.diff, {
+        prAnchor: context.reviewContext.prAnchor,
+        headSha: context.reviewContext.headSha,
+      });
+      if (diffLines.length > 0) {
+        additions.push({ hookId: 'review-diff-f-review', content: diffLines, order: 1760 });
+      }
+      if (context.reviewContext.depSection && context.reviewContext.depSection.length > 0) {
+        additions.push({ hookId: 'review-deps-f-review', content: context.reviewContext.depSection, order: 1765 });
+      }
+    } else if (context.reviewSubject) {
+      // 编排层经 reviewSubject 异步预取并写入缓存的 diff（优先于 reviewContext 的回退分支）。
+      const rc = getPreparedReviewContext(context.reviewSubject);
+      if (rc?.diff) {
+        const diffLines = buildReviewDiffSection(rc.diff, {
+          prAnchor: rc.prAnchor,
+          headSha: rc.headSha,
+        });
+        if (diffLines.length > 0) {
+          additions.push({ hookId: 'review-diff-f-review', content: diffLines, order: 1760 });
+        }
+      }
+      if (rc?.depSection && rc.depSection.length > 0) {
+        additions.push({ hookId: 'review-deps-f-review', content: rc.depSection, order: 1765 });
+      }
+    }
+    if (additions.length > 0) {
+      const scopedPatches = [...trace.patches.filter((p) => SCOPE_D.test(p.hookId))];
+      const d18Idx = scopedPatches.findIndex((p) => p.hookId === 'D18');
+      const insertIdx = d18Idx >= 0 ? d18Idx : scopedPatches.length;
+      // 倒序插入，使 order 小的（checklist 1750）排在 diff（1760）之前。
+      for (let i = additions.length - 1; i >= 0; i--) {
+        scopedPatches.splice(insertIdx, 0, additions[i]);
+      }
       return HookPipeline.assemblePatches(scopedPatches);
     }
   }

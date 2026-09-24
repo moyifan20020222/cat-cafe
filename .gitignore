@@ -79,6 +79,9 @@ cat-config.json
 .claude/settings.json.bak
 .claude/settings.json.abtest-backup
 
+# Project local memory / workbuddy data (contains personal notes & conversation logs — NOT for public fork)
+.workbuddy/
+
 # OS files
 .DS_Store
 Thumbs.db
