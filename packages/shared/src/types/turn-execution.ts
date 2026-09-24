@@ -1,6 +1,14 @@
 import type { CatId } from './ids.js';
 
-export type TurnExecutionKind = 'ordinary' | 'routing_guard' | 'freshness_supplement';
+/**
+ * Typed child purpose; never inferred from prompt or logs.
+ *
+ * `sub_agent` marks a temporary agent spawned *by* a cat mid-execution.
+ * It is a synchronous child call owned by the parent invocation — not an
+ * A2A handoff — so it never advances the A2A depth counter and never writes
+ * to the shared thread. See docs/decisions/ADR-XXX.
+ */
+export type TurnExecutionKind = 'ordinary' | 'routing_guard' | 'freshness_supplement' | 'sub_agent';
 export type TurnExecutionStatus = 'running' | 'succeeded' | 'failed' | 'canceled' | 'interrupted';
 export type TurnExecutionTerminalStatus = Exclude<TurnExecutionStatus, 'running'>;
 
@@ -10,6 +18,10 @@ export interface TurnExecutionCausalRefs {
   routingGuardReason?: 'missing_routing_exit';
   /** Exact persisted message bodies present in this child's prompt. */
   coveredMessageIds?: string[];
+  /** Set only for `sub_agent`: the invocation that spawned this child. */
+  subAgentOf?: string;
+  /** Nesting level of this sub-agent (1 = direct child of a root invocation). */
+  subAgentDepth?: number;
 }
 
 export interface CreateTurnExecutionInput {

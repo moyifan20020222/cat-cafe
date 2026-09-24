@@ -5,6 +5,7 @@
 
 // 必须最先 import：Node 24.16 undici setTypeOfService EINVAL 崩溃防护（见文件头注释）
 import './settos-guard.js';
+import type { DurableCandidate } from './domains/memory/AbstractiveSummaryClient.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -1671,6 +1672,10 @@ async function main(): Promise<void> {
                   status: 'captured',
                   // method → lesson: EvidenceKind has no 'method' variant; methods are stored as lessons
                   targetKind: candidate.kind === 'decision' ? 'decision' : 'lesson',
+                  // F-EXT: carry the causal chain so it survives into the distilled truth.
+                  ...((candidate as unknown as { causal?: DurableCandidate['causal'] }).causal
+                    ? { causal: (candidate as unknown as { causal?: DurableCandidate['causal'] }).causal }
+                    : {}),
                 });
                 // Auto-approve explicit candidates (co-creator不需要每条都审)
                 if (candidate.confidence === 'explicit') {

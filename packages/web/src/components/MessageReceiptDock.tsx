@@ -28,6 +28,7 @@ const EXECUTION_KIND_LABEL: Record<ReceiptExecutionKind, string> = {
   ordinary: '普通执行',
   routing_guard: '系统补路由',
   freshness_supplement: '后到消息补充',
+  sub_agent: '临时子代理',
 };
 
 function findExecutionKind(

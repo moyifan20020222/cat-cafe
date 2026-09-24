@@ -403,3 +403,60 @@ export function getWorklist(threadId: string, parentInvocationId?: string): Work
   const key = registryKey(threadId, parentInvocationId);
   return registry.get(key);
 }
+
+// ─── Temporary sub-agent causal records ────────────────────────
+//
+// Sub-agents are synchronous child calls, NOT A2A handoffs. They are recorded
+// here for causal/audit purposes only so the UI and history projections can
+// show "this invocation spawned that one", but they deliberately do NOT:
+//   - enter `entry.list`   (they are not the next cat to execute)
+//   - increment `a2aCount` (they are not collaboration depth)
+//   - touch the ping-pong streak (they are not a 1:1 conversational exchange)
+//
+// See docs/decisions/ADR-043-temporary-sub-agent.md.
+
+/** Audit trail of sub-agents recorded per parent invocation. */
+export interface SubAgentRecord {
+  invocationId: string;
+  parentInvocationId: string;
+  threadId: string;
+  catId: CatId;
+  spawnedBy: CatId;
+  depth: number;
+  task: string;
+  createdAt: number;
+}
+
+const subAgentRecords = new Map<string, SubAgentRecord[]>();
+
+function subAgentKey(threadId: string, parentInvocationId: string): string {
+  return `${threadId}:${parentInvocationId}`;
+}
+
+/**
+ * Record a temporary sub-agent against its parent invocation.
+ *
+ * Purely an audit record — it never mutates the execution worklist.
+ */
+export function recordSubAgent(record: SubAgentRecord): void {
+  const key = subAgentKey(record.threadId, record.parentInvocationId);
+  const existing = subAgentRecords.get(key);
+  if (existing) {
+    existing.push(record);
+    return;
+  }
+  subAgentRecords.set(key, [record]);
+}
+
+/** Sub-agents recorded for a parent invocation (empty when none). */
+export function getSubAgents(threadId: string, parentInvocationId: string): SubAgentRecord[] {
+  return subAgentRecords.get(subAgentKey(threadId, parentInvocationId)) ?? [];
+}
+
+/**
+ * Drop sub-agent records for a parent invocation.
+ * Called when the parent terminates so the registry does not leak.
+ */
+export function clearSubAgents(threadId: string, parentInvocationId: string): void {
+  subAgentRecords.delete(subAgentKey(threadId, parentInvocationId));
+}

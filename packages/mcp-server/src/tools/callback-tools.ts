@@ -2950,6 +2950,75 @@ export async function handleSetThreadMetadata(input: {
   });
 }
 
+export const spawnTempAgentInputSchema = {
+  task: z
+    .string()
+    .min(1)
+    .max(8000)
+    .describe('The complete brief handed to the temporary sub-agent. This is all the sub-agent knows.'),
+  targetCatId: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('Which cat the sub-agent runs as. Defaults to the calling cat.'),
+  contextMessageIds: z
+    .array(z.string().min(1))
+    .max(20)
+    .optional()
+    .describe('Exact message IDs the sub-agent may see. The sub-agent never receives the whole thread history.'),
+  contextFragments: z
+    .array(z.string().max(4000))
+    .max(10)
+    .optional()
+    .describe('Extra text fragments (file excerpts, notes) prepended to the brief.'),
+  clientRequestId: z
+    .string()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe('Idempotency key. A replay returns the original result instead of re-running.'),
+  agentKeyCatId: z.string().min(1).optional().describe('Agent-key principal (persistent agents only).'),
+};
+
+/**
+ * Spawn a temporary sub-agent and wait for its output.
+ *
+ * Unlike @mention handoffs, the sub-agent's answer comes back to the CALLER
+ * only — it is not posted to the thread and does not count as a collaboration
+ * turn. See docs/decisions/ADR-043-temporary-sub-agent.md.
+ */
+export async function handleSpawnTempAgent(input: {
+  task: string;
+  targetCatId?: string | undefined;
+  contextMessageIds?: string[] | undefined;
+  contextFragments?: string[] | undefined;
+  clientRequestId?: string | undefined;
+  agentKeyCatId?: string | undefined;
+}): Promise<ToolResult> {
+  const body: Record<string, unknown> = {
+    task: input.task,
+    clientRequestId: input.clientRequestId ?? randomUUID(),
+  };
+  if (input.targetCatId) body.targetCatId = input.targetCatId;
+  if (input.contextMessageIds?.length) body.contextMessageIds = input.contextMessageIds;
+  if (input.contextFragments?.length) body.contextFragments = input.contextFragments;
+
+  const result = await callbackPost('/api/callbacks/spawn-temp-agent', body, agentKeyOptions(input));
+  if (!result.isError) {
+    try {
+      const data = JSON.parse((result.content[0] as { text: string }).text);
+      if (data?.status === 'rejected') {
+        return errorResult(
+          `Sub-agent rejected: ${data.reason}${data.detail ? ` — ${data.detail}` : ''}`,
+        );
+      }
+    } catch {
+      // Fall through: a non-JSON or unexpected payload is returned verbatim.
+    }
+  }
+  return result;
+}
+
 export const callbackTools = [
   defineCanonicalTool({
     name: 'cat_cafe_post_message',
@@ -3978,6 +4047,27 @@ export const callbackTools = [
       resourceFamily: 'thread-message',
       action: 'update',
       authority: 'callback-thread',
+      risk: { level: 'write', openWorld: false },
+      runtimeProfiles: ['full'],
+    },
+  }),
+  defineTool({
+    name: 'cat_cafe_spawn_temp_agent',
+    description:
+      'Run a short-lived sub-agent on one discrete piece of work and get its answer back directly. ' +
+      'Use when: you need a focused side investigation, a second pass over a specific excerpt, or a small independent computation — WITHOUT handing the conversation over. ' +
+      'NOT for: collaboration or review (use @mention handoffs instead). ' +
+      'KEY DIFFERENCE vs @mention: the sub-agent\'s output returns to YOU as this tool\'s result; it is never posted to the thread, never visible to other cats, and never counts as a collaboration turn. ' +
+      'CONTEXT: the sub-agent sees ONLY the `task` text plus optional `contextFragments` / `contextMessageIds` — it does not receive the thread history, so include everything it needs. ' +
+      'LIMITS: at most 3 concurrent sub-agents per turn, one nesting level deep, a shared token budget, and a 5 minute timeout; the parent turn canceling cancels all of its sub-agents. ' +
+      'Output: `{ status, output, invocationId, durationMs }`, or `{ status: "rejected", reason }` when a limit blocks the run (e.g. concurrency_limit, budget_exhausted, timeout).',
+    inputSchema: spawnTempAgentInputSchema,
+    handler: handleSpawnTempAgent,
+    governance: {
+      implementationExport: 'handleSpawnTempAgent',
+      resourceFamily: 'sub-agent',
+      action: 'create',
+      authority: 'callback-owner',
       risk: { level: 'write', openWorld: false },
       runtimeProfiles: ['full'],
     },

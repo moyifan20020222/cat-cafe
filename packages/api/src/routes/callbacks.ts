@@ -184,6 +184,7 @@ import { registerCallbackProposePersonMemoryRoutes } from './callback-propose-pe
 import { registerCallbackProposeProfileUpdateRoutes } from './callback-propose-profile-update-routes.js';
 import { registerCallbackProposeSessionHandoffRoutes } from './callback-propose-session-handoff-routes.js';
 import { registerCallbackProposeThreadRoutes } from './callback-propose-thread-routes.js';
+import { registerCallbackSpawnTempAgentRoutes } from './callback-spawn-temp-agent-routes.js';
 import { registerCallbackQuestRoutes } from './callback-quest-routes.js';
 import { registerCallbackReadProfileRoutes } from './callback-read-profile-routes.js';
 import { registerCallbackRecordProactiveMemoryAbstentionRoutes } from './callback-record-proactive-memory-abstention-routes.js';
@@ -710,6 +711,18 @@ export interface CallbackRoutesOptions {
   guideSessionStore?: import('../domains/guides/GuideSessionRepository.js').IGuideSessionStore;
   /** AgentRegistry for thread-cats MCP callback */
   agentRegistry?: { getAllEntries(): Map<string, unknown> };
+  /**
+   * Optional factory overriding how a temporary sub-agent obtains its service.
+   * Omitted → the cat's registered service is reused (safe: `invoke()` is an
+   * async generator that launches an independent provider turn per call).
+   */
+  resolveSubAgentService?: (input: {
+    catId: import('@cat-cafe/shared').CatId;
+    threadId: string;
+    userId: string;
+  }) => import('../domains/cats/services/types.js').AgentService | Promise<import('../domains/cats/services/types.js').AgentService>;
+  /** Optional working-directory resolver for temporary sub-agents. */
+  resolveSubAgentWorkingDirectory?: (input: { threadId: string; userId: string }) => string | undefined;
   /** For post_message @mention → invocation triggering */
   router?: AgentRouter;
   invocationRecordStore?: IInvocationRecordStore;
@@ -5297,6 +5310,19 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     registerCallbackThreadCatsRoutes(app, {
       threadStore: opts.threadStore,
       agentRegistry: opts.agentRegistry,
+    });
+  }
+
+  // Temporary sub-agent callback: a cat spawns a short-lived child agent and
+  // receives its output directly. Not an A2A handoff — see ADR-043.
+  if (opts.agentRegistry) {
+    registerCallbackSpawnTempAgentRoutes(app, {
+      registry,
+      agentRegistry: opts.agentRegistry,
+      ...(opts.resolveSubAgentService ? { resolveService: opts.resolveSubAgentService } : {}),
+      ...(opts.resolveSubAgentWorkingDirectory
+        ? { resolveWorkingDirectory: opts.resolveSubAgentWorkingDirectory }
+        : {}),
     });
   }
 

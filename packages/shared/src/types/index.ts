@@ -1421,6 +1421,28 @@ export type {
   TurnExecutionTerminalInput,
   TurnExecutionTerminalStatus,
 } from './turn-execution.js';
+// Temporary sub-agent types (spawned by a cat mid-execution)
+export {
+  MAX_CONCURRENT_SUB_AGENTS,
+  MAX_SUB_AGENT_DEPTH,
+  SUB_AGENT_TIMEOUT_MS,
+  SUB_AGENT_TOKEN_BUDGET,
+} from './sub-agent.js';
+export type {
+  SubAgentRejection,
+  SubAgentRejectionReason,
+  SubAgentResult,
+} from './sub-agent.js';
+// F-EXT: Causal memory extraction schema（因果记忆提取四元组 + 冲突评估）
+export type { CausalConfidence, CausalExtraction, ConflictAssessment } from './causal-memory.js';
+export type {
+  ReviewSeverity,
+  ReviewCategory,
+  CodeReviewFinding,
+  ReviewVerdict,
+  StructuredReviewReport,
+} from './code-review.js';
+export { deriveVerdict, sortFindingsBySeverity, SEVERITY_RANK, parseReviewReport } from './code-review.js';
 // User preferences types (F166 猫猫排序自定义)
 export type {
   MessageDispositionPreferenceSnapshot,

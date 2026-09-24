@@ -2,6 +2,7 @@
 // See docs/features/F102-memory-adapter-refactor.md for architecture
 
 import type { EntityConflictContext, EntityConflictResolutionRequest } from '@cat-cafe/shared';
+import type { CausalExtraction } from '@cat-cafe/shared';
 import type { CollectionSensitivity, ReviewStatus, SearchDimension } from './collection-types.js';
 import type { F163Activation, F163Authority } from './f163-types.js';
 
@@ -143,6 +144,8 @@ export interface EvidenceItem {
   retrievalScore?: number;
   /** F209 Phase B: entity alias / mention explanations for retrieval-anchor hits */
   entityMatches?: EntityMatch[];
+  /** F-EXT: causal memory — structured trigger/action/result/lesson chain extracted from this item. */
+  causal?: CausalExtraction;
   /** AC-I9: passage-level detail when depth=raw */
   passages?: Array<{
     docAnchor?: string;
@@ -263,6 +266,8 @@ export interface Marker {
   targetCollectionId?: string;
   promoteReviewStatus?: ReviewStatus;
   secretScanFingerprint?: string;
+  /** F-EXT: causal memory carried from the abstractive candidate into the marker. */
+  causal?: CausalExtraction;
 }
 
 export interface SearchOptions {

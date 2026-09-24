@@ -5,7 +5,12 @@
  * Program parses the output into structured segments (what code is good at).
  *
  * co-creator原话："我们就不能让他返回自然语言直接帮他加格式吗？格式就是程序加。"
+ *
+ * F-EXT: candidates 现在可携带因果四元组（CausalExtraction），把"教训"从扁平字符串
+ * 升级为 触发→动作→结果→规律 的结构化记忆。
  */
+
+import type { CausalExtraction } from '@cat-cafe/shared';
 
 export interface AbstractiveInput {
   previousSummary: string | null;
@@ -34,6 +39,8 @@ export interface DurableCandidate {
   evidence: Array<{ threadId: string; messageId: string; span: string }>;
   relatedAnchors: string[];
   confidence: 'explicit' | 'inferred';
+  /** F-EXT: 因果四元组。命中时记忆从扁平 claim 升级为结构化因果链。 */
+  causal?: CausalExtraction;
 }
 
 export interface AbstractiveResult {
@@ -73,6 +80,26 @@ Rules:
 - Keep it concise — this is a summary, not a transcript
 - Write in the same language as the messages (Chinese/English/mixed)
 - Maximum 2 candidates per summary — if you find more, keep only the most durable ones
+
+## Causal Trace (recommended for [lesson]/[decision])
+
+When a candidate is a genuine lesson or decision, ALSO emit a causal trace immediately after the
+tag line so the durable knowledge becomes a structured causal chain instead of a flat claim.
+Use this exact block (one line per field, English or Chinese label both accepted):
+
+  trigger: <what situation/signal triggered this — the recall condition>
+  action: <what was done / decided>
+  result: <the observable outcome>
+  lesson: <the cross-scenario reusable principle — this is the durable truth>
+
+Example:
+[lesson!] Fail-open catch blocks must log errors, not silently swallow
+  trigger: a try/catch wrapped a critical step
+  action: changed the catch to log the error before continuing
+  result: "looks OK but actually empty" bugs became visible in logs
+  lesson: silent failures hide real defects; surface them
+
+If you cannot fill all four fields with confidence, omit the block — a flat claim is fine.
 
 ## Knowledge Admission Standards
 
@@ -220,14 +247,21 @@ function extractCandidates(text: string, input: AbstractiveInput): DurableCandid
   const candidates: DurableCandidate[] = [];
   // Match [decision!] (explicit) or [decision] (inferred) — the ! suffix signals human confirmation
   const candidateRegex = /\[(decision|lesson|method)(!?)\]\s*(.+?)(?:\s*[—–-]\s*(.+))?$/gim;
-  let match;
-  while ((match = candidateRegex.exec(text)) !== null) {
+  // Use matchAll so each match carries its index without corrupting a shared lastIndex
+  // (re-using the global regex via exec() inside the loop reset lastIndex on null → infinite loop).
+  const all = [...text.matchAll(candidateRegex)];
+  for (let i = 0; i < all.length; i++) {
+    const match = all[i]!;
     const kind = match[1].toLowerCase() as 'decision' | 'lesson' | 'method';
     const isExplicit = match[2] === '!';
     const title = match[3].trim();
     const claim = match[4]?.trim() || title;
     // Lightweight reject gate: skip implementation noise
     if (isImplementationNoise(title, claim)) continue;
+    // F-EXT: capture the tail (until the next candidate or end of text) to parse a causal trace block
+    const tailStart = match.index + match[0].length;
+    const tailEnd = all[i + 1] ? all[i + 1]!.index : text.length;
+    const causal = parseCausalTrace(text.slice(tailStart, tailEnd));
     candidates.push({
       kind,
       title,
@@ -236,6 +270,7 @@ function extractCandidates(text: string, input: AbstractiveInput): DurableCandid
       evidence: [{ threadId: input.threadId, messageId: input.messages[0]?.id ?? '', span: '' }],
       relatedAnchors: [],
       confidence: isExplicit ? 'explicit' : 'inferred',
+      ...(causal ? { causal } : {}),
     });
   }
   // Cap: keep only the most confident candidates (explicit first, then by order)
@@ -244,6 +279,33 @@ function extractCandidates(text: string, input: AbstractiveInput): DurableCandid
     candidates.length = MAX_CANDIDATES_PER_SEGMENT;
   }
   return candidates;
+}
+
+// F-EXT: parse the trigger/action/result/lesson block that follows a candidate tag line.
+// Accepts English or Chinese labels; returns null when any field is missing or too short.
+function parseCausalTrace(block: string): CausalExtraction | null {
+  const field = (labelAliases: string[]): string | null => {
+    for (const alias of labelAliases) {
+      const re = new RegExp(`^\\s*${alias}\\s*[:：]\\s*(.+)$`, 'im');
+      const m = block.match(re);
+      if (m?.[1]) return m[1].trim();
+    }
+    return null;
+  };
+  const trigger = field(['trigger', '触发', '情境', '信号']);
+  const action = field(['action', '动作', '措施', '决策']);
+  const result = field(['result', '结果', '产出']);
+  const lesson = field(['lesson', '教训', '规律', '原则']);
+  if (!trigger || !action || !result || !lesson) return null;
+  if (trigger.length < 4 || lesson.length < 4) return null;
+  const confidenceRaw = field(['confidence', '把握', '置信']);
+  const causalConfidence: CausalExtraction['causalConfidence'] =
+    confidenceRaw === 'high' || confidenceRaw === '高'
+      ? 'high'
+      : confidenceRaw === 'low' || confidenceRaw === '低'
+        ? 'low'
+        : 'medium';
+  return { trigger, action, result, lesson, causalConfidence };
 }
 
 function buildSingleSegment(

@@ -56,7 +56,12 @@ export interface ITurnExecutionStore {
   ): TurnExecutionRecord[] | Promise<TurnExecutionRecord[]>;
 }
 
-const EXECUTION_KINDS = new Set<TurnExecutionKind>(['ordinary', 'routing_guard', 'freshness_supplement']);
+const EXECUTION_KINDS = new Set<TurnExecutionKind>([
+  'ordinary',
+  'routing_guard',
+  'freshness_supplement',
+  'sub_agent',
+]);
 const TERMINAL_STATUSES = new Set<TurnExecutionTerminalStatus>(['succeeded', 'failed', 'canceled', 'interrupted']);
 
 function assertNonEmpty(value: string, field: string): void {
