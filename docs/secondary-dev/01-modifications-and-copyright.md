@@ -67,7 +67,7 @@
 
 ### 2.4 来源可追溯性（诚信 + 法律保护）
 
-- 仓库 git 历史首提交作者为 `苏策 <lysander@suces-MacBook-Pro.local>`，远程 `origin = github.com/zts212653/clowder-ai`。
+- 仓库 git 历史首提交作者为 `苏策 <lysander@suces-MacBook-Pro.local>`，Fork 上游为 `zts212653/clowder-ai`（MIT）。本机二次开发版的推送目标 `origin` 已指向个人仓库 `github.com/moyifan20020222/cat-cafe`；上游 `upstream = zts212653/clowder-ai` 仅保留 fetch、已禁用 push（防止误改他人代码）。
 - 请在 README 明确声明：**"本仓库 Fork 自 Clowder AI（zts212653/clowder-ai，MIT），由 <你> 二次开发。"** 这既是诚信，也符合 MIT 的署名要求。
 
 ---

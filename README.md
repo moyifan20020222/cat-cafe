@@ -1,4 +1,4 @@
-> **🍴 Fork 声明（Important）**：本仓库 **Fork 自 [zts212653/clowder-ai](https://github.com/zts212653/clowder-ai)**（根许可证 **MIT**，原作者 Clowder AI Contributors）。在原框架之上，我二次开发了 **Code Review 子系统**（结构化审查契约 + Git PR 锚点 + PyPI 供应链启发式检测）以及完善了临时 sub-agent 协作设计。完整的二次开发说明、改动清单与版权合规见 [`docs/secondary-dev/00-project-readme.md`](docs/secondary-dev/00-project-readme.md)。版权与许可证见 [LICENSE](LICENSE)。
+> **🍴 Fork 声明（Important）**：本仓库 **Fork 自 [zts212653/clowder-ai](https://github.com/zts212653/clowder-ai)**（根许可证 **MIT**，原作者 Clowder AI Contributors），**本 Fork 发布于 [moyifan20020222/cat-cafe](https://github.com/moyifan20020222/cat-cafe)**。在原框架之上，我二次开发了 **Code Review 子系统**（结构化审查契约 + Git PR 锚点 + PyPI 供应链启发式检测）以及完善了临时 sub-agent 协作设计。完整的二次开发说明、改动清单与版权合规见 [`docs/secondary-dev/00-project-readme.md`](docs/secondary-dev/00-project-readme.md)。版权与许可证见 [LICENSE](LICENSE)。
 
 ---
 
