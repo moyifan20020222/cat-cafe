@@ -154,6 +154,10 @@ assets/prototypes/
 desktop/node_modules/
 desktop-dist/
 bundled/
+# Desktop app source is AGPL-3.0-only (see desktop/package.json) — excluded from this
+# MIT fork to avoid copyleft contamination. Files are kept on disk locally; only removed
+# from git tracking so the published fork stays MIT. Re-add explicitly if you accept AGPL.
+desktop/
 docs/bug-report/werewolf-investigation/poster-screenshot.png
 .worktrees/
 .review-worktrees/
